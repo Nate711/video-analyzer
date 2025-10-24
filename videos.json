@@ -1,0 +1,43 @@
+{
+  "videos": [
+    {
+      "id": 1,
+      "display_name": "test-video",
+      "local_path": "/Users/nathankau/video-analysis/videos/test-video.mov",
+      "file_id": "5ulvkxrrzv54",
+      "file_name": "files/5ulvkxrrzv54",
+      "description": "",
+      "uploaded_at": "2025-10-24T00:05:34.820066",
+      "metadata": {
+        "uri": "https://generativelanguage.googleapis.com/v1beta/files/5ulvkxrrzv54",
+        "mime_type": "video/quicktime"
+      }
+    },
+    {
+      "id": 2,
+      "display_name": "unloading-dishes-by-hand",
+      "local_path": "/Users/nathankau/video-analysis/videos/unloading-dishes-by-hand.mov",
+      "file_id": "8qjzswsu021w",
+      "file_name": "files/8qjzswsu021w",
+      "description": "",
+      "uploaded_at": "2025-10-24T00:11:24.914182",
+      "metadata": {
+        "uri": "https://generativelanguage.googleapis.com/v1beta/files/8qjzswsu021w",
+        "mime_type": "video/quicktime"
+      }
+    },
+    {
+      "id": 3,
+      "display_name": "volleyball",
+      "local_path": "/Users/nathankau/video-analysis/videos/volleyball.mov",
+      "file_id": "mzaqijmnh4ji",
+      "file_name": "files/mzaqijmnh4ji",
+      "description": "",
+      "uploaded_at": "2025-10-24T13:46:02.848028",
+      "metadata": {
+        "uri": "https://generativelanguage.googleapis.com/v1beta/files/mzaqijmnh4ji",
+        "mime_type": "video/quicktime"
+      }
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+[project]
+name = "video-analysis"
+version = "0.1.0"
+description = "Video analysis and segmentation library using Gemini 2.5 Flash API with ffmpeg extraction"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "google-genai>=1.46.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.scripts]
+video-analyze = "main:main"
+compare-prompts = "bin.compare_prompts:main"
+manage-videos = "bin.manage_videos:main"
