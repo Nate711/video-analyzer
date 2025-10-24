@@ -2,11 +2,8 @@
 """Core video analysis functionality using Gemini 2.5 Flash API"""
 
 import json
-import time
 import logging
 from typing import List
-from google import genai
-from google.genai import types
 
 logger = logging.getLogger(__name__)
 
@@ -30,56 +27,32 @@ class VideoSegment:
         }
 
 
-class VideoAnalyzer:
-    """Handles video analysis using Gemini API"""
+def parse_segments_response(response_text: str) -> List[VideoSegment]:
+    """Parse Gemini API response into VideoSegment objects
 
-    def __init__(self, api_key: str):
-        self.client = genai.Client(api_key=api_key)
-        self.model_id = "gemini-2.5-flash"
+    Args:
+        response_text: Raw response text from Gemini API
 
-    def analyze_video_segments(self, video_path: str, prompt: str) -> List[VideoSegment]:
-        """Analyze video and return activity segments with timestamps
+    Returns:
+        List of VideoSegment objects
+    """
+    # Remove markdown code blocks if present
+    response_text = response_text.strip()
+    if response_text.startswith("```json"):
+        response_text = response_text.split("```json")[1].split("```")[0].strip()
+    elif response_text.startswith("```"):
+        response_text = response_text.split("```")[1].split("```")[0].strip()
 
-        Args:
-            video_path: Path to the video file
-            prompt: Analysis prompt to send to Gemini
+    segments_data = json.loads(response_text)
+    segments = [
+        VideoSegment(
+            start_time=seg["start_time"],
+            end_time=seg["end_time"],
+            activity=seg["activity"],
+            description=seg.get("description", ""),
+        )
+        for seg in segments_data
+    ]
 
-        Returns:
-            List of VideoSegment objects
-        """
-
-        logger.info(f"Uploading video: {video_path}")
-        video_file = self.client.files.upload(file=video_path)
-
-        while video_file.state.name == "PROCESSING":
-            logger.info("Waiting for video processing...")
-            time.sleep(2)
-            video_file = self.client.files.get(name=video_file.name)
-
-        logger.info(f"Video uploaded successfully (File ID: {video_file.name})")
-        logger.info("Analyzing video to identify key parts...")
-
-        response = self.client.models.generate_content(model=self.model_id, contents=[video_file, prompt])
-
-        # Parse JSON response
-        response_text = response.text.strip()
-
-        # Remove markdown code blocks if present
-        if response_text.startswith("```json"):
-            response_text = response_text.split("```json")[1].split("```")[0].strip()
-        elif response_text.startswith("```"):
-            response_text = response_text.split("```")[1].split("```")[0].strip()
-
-        segments_data = json.loads(response_text)
-        segments = [
-            VideoSegment(
-                start_time=seg["start_time"],
-                end_time=seg["end_time"],
-                activity=seg["activity"],
-                description=seg.get("description", ""),
-            )
-            for seg in segments_data
-        ]
-
-        logger.info(f"Found {len(segments)} segments")
-        return segments
+    logger.info(f"Parsed {len(segments)} segments from response")
+    return segments

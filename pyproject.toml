@@ -10,6 +10,5 @@ dependencies = [
 ]
 
 [project.scripts]
-video-analyze = "main:main"
 compare-prompts = "bin.compare_prompts:main"
 manage-videos = "bin.manage_videos:main"

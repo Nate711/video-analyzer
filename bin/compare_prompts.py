@@ -14,7 +14,7 @@ from google import genai
 # Add parent directory to path for local imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from video_analysis.core import VideoAnalyzer, VideoSegment
+from video_analysis.core import VideoSegment, parse_segments_response
 from video_analysis.extractor import VideoExtractor
 from video_analysis.prompts import PROMPTS, list_prompts
 from video_analysis.video_db import VideoDatabase
@@ -209,7 +209,7 @@ def main():
         client = genai.Client(api_key=api_key)
 
     if args.video_source:
-        # Try to parse as video ID first
+        # Parse as video ID
         try:
             video_id = int(args.video_source)
             video_info = db.get_video(video_id)
@@ -235,12 +235,9 @@ def main():
                 f"Using uploaded video: {video_info['display_name']} (ID: {video_id}) - {format_time_remaining(time_remaining)} remaining"
             )
         except ValueError:
-            # Treat as file path
-            video_path = args.video_source
-            if not os.path.exists(video_path):
-                logger.error(f"Video file not found: {video_path}")
-                sys.exit(1)
-            logger.info(f"Using local video file: {video_path}")
+            logger.error(f"Invalid video ID: {args.video_source}. Must be a numeric ID from the database.")
+            logger.info("Upload a video first with: python bin/manage_videos.py upload <path>")
+            sys.exit(1)
     else:
         # Interactive selection (requires client for validation)
         if not client:
@@ -287,40 +284,25 @@ def main():
                 # Analyze video with current prompt
                 prompt = PROMPTS[prompt_name]
 
-                # Use uploaded file if available, otherwise upload temporarily
-                if gemini_file:
-                    logger.info(f"Using pre-uploaded Gemini file: {gemini_file}")
-                    response = client.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=[{"file_data": {"file_uri": f"https://generativelanguage.googleapis.com/v1beta/{gemini_file}"}}, prompt],
-                    )
-                else:
-                    # Use the VideoAnalyzer which will upload the file
-                    analyzer = VideoAnalyzer(api_key)
-                    segments = analyzer.analyze_video_segments(video_path, prompt)
-                    response = None
+                # Use pre-uploaded file
+                logger.info(f"Using pre-uploaded Gemini file: {gemini_file} (sampling at 2 FPS)")
+                from google.genai import types
 
-                # Parse response if we used direct API call
-                if response:
-                    response_text = response.text.strip()
+                response = client.models.generate_content(
+                    model="gemini-2.5-flash",
+                    contents=types.Content(
+                        parts=[
+                            types.Part(
+                                file_data=types.FileData(file_uri=f"https://generativelanguage.googleapis.com/v1beta/{gemini_file}"),
+                                video_metadata=types.VideoMetadata(fps=2),
+                            ),
+                            types.Part(text=prompt),
+                        ]
+                    ),
+                )
 
-                    # Remove markdown code blocks if present
-                    if response_text.startswith("```json"):
-                        response_text = response_text.split("```json")[1].split("```")[0].strip()
-                    elif response_text.startswith("```"):
-                        response_text = response_text.split("```")[1].split("```")[0].strip()
-
-                    segments_data = json.loads(response_text)
-                    segments = [
-                        VideoSegment(
-                            start_time=seg["start_time"],
-                            end_time=seg["end_time"],
-                            activity=seg["activity"],
-                            description=seg.get("description", ""),
-                        )
-                        for seg in segments_data
-                    ]
-                    logger.info(f"Found {len(segments)} segments")
+                # Parse response using shared utility
+                segments = parse_segments_response(response.text)
 
                 # Save analysis results
                 save_analysis_results(prompt_name, segments, prompt_output_dir, video_info)
