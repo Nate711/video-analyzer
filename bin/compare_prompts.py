@@ -62,11 +62,26 @@ def save_analysis_results(prompt_name: str, segments: list, output_dir: str, vid
     logger.info(f"Saved analysis results to {output_file}")
 
 
-def select_video_interactive(db: VideoDatabase) -> dict:
+def format_time_remaining(td):
+    """Format timedelta for display"""
+    if td.total_seconds() < 0:
+        return "EXPIRED"
+
+    hours = int(td.total_seconds() // 3600)
+    minutes = int((td.total_seconds() % 3600) // 60)
+
+    if hours > 0:
+        return f"{hours}h {minutes}m"
+    else:
+        return f"{minutes}m"
+
+
+def select_video_interactive(db: VideoDatabase, client: genai.Client) -> dict:
     """Interactive video selection from database
 
     Args:
         db: VideoDatabase instance
+        client: Gemini client for checking file status
 
     Returns:
         Selected video entry
@@ -78,24 +93,59 @@ def select_video_interactive(db: VideoDatabase) -> dict:
         sys.exit(1)
 
     print("\nAvailable videos:")
-    print("=" * 100)
+    print("=" * 120)
+
+    active_videos = []
     for video in videos:
-        print(f"\n[{video['id']}] {video['display_name']}")
+        is_expired = db.is_expired(video)
+        time_remaining = db.get_time_until_expiry(video)
+
+        # Check if file exists
+        exists = db.check_file_exists(video, client)
+
+        if not is_expired and exists:
+            status = f"✓ Active ({format_time_remaining(time_remaining)})"
+            active_videos.append(video)
+        elif is_expired:
+            status = "✗ EXPIRED"
+        elif not exists:
+            status = "✗ File not found in API"
+        else:
+            status = "?"
+
+        print(f"\n[{video['id']}] {video['display_name']} - {status}")
         print(f"    Path: {video['local_path']}")
         print(f"    Uploaded: {video['uploaded_at']}")
         if video['description']:
             print(f"    Description: {video['description']}")
-    print("=" * 100)
+
+    print("=" * 120)
+
+    if not active_videos:
+        logger.error("No active videos available. Upload a new video or check status.")
+        sys.exit(1)
 
     while True:
         try:
             choice = input("\nEnter video ID to use: ").strip()
             video_id = int(choice)
             video = db.get_video(video_id)
-            if video:
-                return video
-            else:
+
+            if not video:
                 print(f"Video ID {video_id} not found. Please try again.")
+                continue
+
+            # Validate video is usable
+            if db.is_expired(video):
+                print(f"Video ID {video_id} has expired. Please choose an active video.")
+                continue
+
+            if not db.check_file_exists(video, client):
+                print(f"Video ID {video_id} file not found in Gemini API. Please choose another video.")
+                continue
+
+            return video
+
         except ValueError:
             print("Invalid input. Please enter a numeric ID.")
         except KeyboardInterrupt:
@@ -147,32 +197,7 @@ def main():
     video_path = None
     gemini_file = None
 
-    if args.video_source:
-        # Try to parse as video ID first
-        try:
-            video_id = int(args.video_source)
-            video_info = db.get_video(video_id)
-            if not video_info:
-                logger.error(f"Video ID {video_id} not found in database")
-                sys.exit(1)
-            video_path = video_info["local_path"]
-            gemini_file = video_info["file_name"]
-            logger.info(f"Using uploaded video: {video_info['display_name']} (ID: {video_id})")
-        except ValueError:
-            # Treat as file path
-            video_path = args.video_source
-            if not os.path.exists(video_path):
-                logger.error(f"Video file not found: {video_path}")
-                sys.exit(1)
-            logger.info(f"Using local video file: {video_path}")
-    else:
-        # Interactive selection
-        video_info = select_video_interactive(db)
-        video_path = video_info["local_path"]
-        gemini_file = video_info["file_name"]
-        logger.info(f"Selected video: {video_info['display_name']} (ID: {video_info['id']})")
-
-    # Get API key (only needed if not skipping analysis)
+    # Get API key early for validation
     api_key = None
     client = None
     if not args.skip_analysis:
@@ -182,6 +207,49 @@ def main():
             logger.info("Get your API key from: https://aistudio.google.com/app/apikey")
             sys.exit(1)
         client = genai.Client(api_key=api_key)
+
+    if args.video_source:
+        # Try to parse as video ID first
+        try:
+            video_id = int(args.video_source)
+            video_info = db.get_video(video_id)
+            if not video_info:
+                logger.error(f"Video ID {video_id} not found in database")
+                sys.exit(1)
+
+            # Validate video is not expired and file exists
+            if not args.skip_analysis:
+                if db.is_expired(video_info):
+                    logger.error(f"Video ID {video_id} has expired. Please upload a new video or use a different one.")
+                    sys.exit(1)
+
+                if not db.check_file_exists(video_info, client):
+                    logger.error(f"Video ID {video_id} file not found in Gemini API. The file may have been deleted.")
+                    logger.info("Try re-uploading the video with: python bin/manage_videos.py upload <path>")
+                    sys.exit(1)
+
+            video_path = video_info["local_path"]
+            gemini_file = video_info["file_name"]
+            time_remaining = db.get_time_until_expiry(video_info)
+            logger.info(
+                f"Using uploaded video: {video_info['display_name']} (ID: {video_id}) - {format_time_remaining(time_remaining)} remaining"
+            )
+        except ValueError:
+            # Treat as file path
+            video_path = args.video_source
+            if not os.path.exists(video_path):
+                logger.error(f"Video file not found: {video_path}")
+                sys.exit(1)
+            logger.info(f"Using local video file: {video_path}")
+    else:
+        # Interactive selection (requires client for validation)
+        if not client:
+            logger.error("Interactive selection requires API key for validation")
+            sys.exit(1)
+        video_info = select_video_interactive(db, client)
+        video_path = video_info["local_path"]
+        gemini_file = video_info["file_name"]
+        logger.info(f"Selected video: {video_info['display_name']} (ID: {video_info['id']})")
 
     # Determine which prompts to test
     prompts_to_test = args.prompts if args.prompts else list_prompts()

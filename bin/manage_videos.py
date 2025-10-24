@@ -74,7 +74,21 @@ def upload_video(args, client: genai.Client, db: VideoDatabase):
     print(f"  Gemini File: {video_entry['file_name']}")
 
 
-def list_videos(args, db: VideoDatabase):
+def format_time_remaining(td):
+    """Format timedelta for display"""
+    if td.total_seconds() < 0:
+        return "EXPIRED"
+
+    hours = int(td.total_seconds() // 3600)
+    minutes = int((td.total_seconds() % 3600) // 60)
+
+    if hours > 0:
+        return f"{hours}h {minutes}m remaining"
+    else:
+        return f"{minutes}m remaining"
+
+
+def list_videos(args, db: VideoDatabase, client: genai.Client = None):
     """List all uploaded videos"""
 
     videos = db.list_videos()
@@ -83,24 +97,57 @@ def list_videos(args, db: VideoDatabase):
         print("No videos in database.")
         return
 
-    print(f"\nUploaded Videos ({len(videos)}):")
-    print("=" * 100)
+    # Check file existence unless explicitly skipped
+    file_status = {}
+    should_check = client and not getattr(args, 'skip_check', False)
 
+    if should_check:
+        logger.info("Checking file status in Gemini Files API...")
+        for video in videos:
+            file_status[video['id']] = db.check_file_exists(video, client)
+    elif not client:
+        logger.warning("API key not provided - cannot verify file existence")
+
+    print(f"\nUploaded Videos ({len(videos)}):")
+    print("=" * 120)
+
+    expired_count = 0
     for video in videos:
+        # Calculate expiry status
+        is_expired = db.is_expired(video)
+        time_remaining = db.get_time_until_expiry(video)
+
+        if is_expired:
+            expired_count += 1
+            status = "EXPIRED"
+        else:
+            status = format_time_remaining(time_remaining)
+
         print(f"\nID: {video['id']}")
         print(f"Name: {video['display_name']}")
         print(f"Local Path: {video['local_path']}")
         print(f"Gemini File: {video['file_name']}")
         print(f"Uploaded: {video['uploaded_at']}")
+        print(f"Expiry Status: {status}")
+
+        # Show file existence status if checked
+        if video['id'] in file_status:
+            exists = file_status[video['id']]
+            print(f"File Exists in API: {'YES' if exists else 'NO'}")
+
         if video['description']:
             print(f"Description: {video['description']}")
         if args.verbose and video.get('metadata'):
             print(f"Metadata: {video['metadata']}")
 
-    print("=" * 100)
+    print("=" * 120)
+    if expired_count > 0:
+        print(f"\n⚠️  {expired_count} video(s) expired. Run 'cleanup' command to remove them.")
+    if getattr(args, 'skip_check', False):
+        print("\nNote: File existence check skipped. Remove --skip-check to verify files in API.")
 
 
-def show_video(args, db: VideoDatabase):
+def show_video(args, db: VideoDatabase, client: genai.Client = None):
     """Show details of a specific video"""
 
     video = db.get_video(args.id)
@@ -108,6 +155,11 @@ def show_video(args, db: VideoDatabase):
     if not video:
         logger.error(f"Video ID {args.id} not found")
         sys.exit(1)
+
+    # Calculate expiry status
+    is_expired = db.is_expired(video)
+    time_remaining = db.get_time_until_expiry(video)
+    expiry_time = db.get_expiry_time(video)
 
     print(f"\nVideo Details:")
     print("=" * 100)
@@ -117,6 +169,20 @@ def show_video(args, db: VideoDatabase):
     print(f"Gemini File ID: {video['file_id']}")
     print(f"Gemini File Name: {video['file_name']}")
     print(f"Uploaded: {video['uploaded_at']}")
+    print(f"Expires: {expiry_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+    if is_expired:
+        print(f"Status: EXPIRED")
+    else:
+        print(f"Status: Active ({format_time_remaining(time_remaining)})")
+
+    # Check file existence unless explicitly skipped
+    if client and not getattr(args, 'skip_check', False):
+        exists = db.check_file_exists(video, client)
+        print(f"File Exists in API: {'YES' if exists else 'NO'}")
+    elif getattr(args, 'skip_check', False):
+        print(f"File Exists in API: Not checked (--skip-check used)")
+
     print(f"Description: {video['description']}")
     print(f"Metadata: {video.get('metadata', {})}")
     print("=" * 100)
@@ -162,10 +228,66 @@ def update_video(args, db: VideoDatabase):
 
     if db.update_video(args.id, **updates):
         logger.info(f"Updated video ID {args.id}")
-        show_video(argparse.Namespace(id=args.id), db)
+        show_video(argparse.Namespace(id=args.id), db, None)
     else:
         logger.error(f"Video ID {args.id} not found")
         sys.exit(1)
+
+
+def cleanup_expired(args, db: VideoDatabase, client: genai.Client = None):
+    """Clean up expired videos from database"""
+
+    videos = db.list_videos()
+    if not videos:
+        print("No videos in database.")
+        return
+
+    # Show what will be deleted
+    expired = [v for v in videos if db.is_expired(v)]
+
+    if not expired:
+        print("No expired videos found.")
+        return
+
+    # Check file existence unless explicitly skipped
+    should_check = client and not getattr(args, 'skip_check', False)
+
+    print(f"\nFound {len(expired)} expired video(s):")
+    print("=" * 100)
+    for video in expired:
+        print(f"\nID: {video['id']}")
+        print(f"Name: {video['display_name']}")
+        print(f"Uploaded: {video['uploaded_at']}")
+        expiry_time = db.get_expiry_time(video)
+        print(f"Expired: {expiry_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+        # Check if file still exists unless skipped
+        if should_check:
+            exists = db.check_file_exists(video, client)
+            print(f"File Still Exists in API: {'YES (will keep)' if exists else 'NO (will delete)'}")
+
+    print("=" * 100)
+
+    # Confirm deletion unless --yes flag is set
+    if not args.yes:
+        response = input(f"\nDelete {len(expired)} expired video(s) from database? [y/N]: ").strip().lower()
+        if response != 'y':
+            print("Cancelled.")
+            return
+
+    # Perform cleanup with file checking unless skipped
+    result = db.cleanup_expired(client if should_check else None)
+
+    deleted_count = len(result["deleted"])
+    kept_count = len([v for v in expired if v["id"] in result["kept"]])
+
+    print(f"\nCleanup complete:")
+    print(f"  Deleted: {deleted_count} video(s)")
+    if kept_count > 0:
+        print(f"  Kept: {kept_count} video(s) (file still exists in API)")
+
+    if deleted_count > 0:
+        print(f"\nDeleted video IDs: {', '.join(map(str, result['deleted']))}")
 
 
 def main():
@@ -184,10 +306,12 @@ def main():
     # List command
     list_parser = subparsers.add_parser("list", help="List all uploaded videos")
     list_parser.add_argument("--verbose", "-v", action="store_true", help="Show additional metadata")
+    list_parser.add_argument("--skip-check", action="store_true", help="Skip checking if files still exist in Gemini API")
 
     # Show command
     show_parser = subparsers.add_parser("show", help="Show details of a specific video")
     show_parser.add_argument("id", type=int, help="Video ID to show")
+    show_parser.add_argument("--skip-check", action="store_true", help="Skip checking if file still exists in Gemini API")
 
     # Delete command
     delete_parser = subparsers.add_parser("delete", help="Delete a video from database")
@@ -202,6 +326,11 @@ def main():
     update_parser.add_argument("--name", help="New display name")
     update_parser.add_argument("--description", help="New description")
 
+    # Cleanup command
+    cleanup_parser = subparsers.add_parser("cleanup", help="Remove expired videos from database")
+    cleanup_parser.add_argument("--skip-check", action="store_true", help="Skip checking file existence in API (delete all expired by time)")
+    cleanup_parser.add_argument("--yes", "-y", action="store_true", help="Skip confirmation prompt")
+
     args = parser.parse_args()
 
     if not args.command:
@@ -213,7 +342,13 @@ def main():
 
     # Initialize Gemini client for commands that need it
     client = None
-    if args.command in ["upload", "delete"]:
+    # Always need client unless explicitly skipping checks
+    needs_client = args.command in ["upload", "delete"]
+    # For list, show, cleanup: need client unless --skip-check is used
+    if args.command in ["list", "show", "cleanup"]:
+        needs_client = needs_client or not getattr(args, "skip_check", False)
+
+    if needs_client:
         api_key = os.getenv("GEMINI_API_KEY")
         if not api_key:
             logger.error("GEMINI_API_KEY not set in .env file")
@@ -225,13 +360,15 @@ def main():
     if args.command == "upload":
         upload_video(args, client, db)
     elif args.command == "list":
-        list_videos(args, db)
+        list_videos(args, db, client)
     elif args.command == "show":
-        show_video(args, db)
+        show_video(args, db, client)
     elif args.command == "delete":
         delete_video(args, client, db)
     elif args.command == "update":
         update_video(args, db)
+    elif args.command == "cleanup":
+        cleanup_expired(args, db, client)
 
 
 if __name__ == "__main__":
