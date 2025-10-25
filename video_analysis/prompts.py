@@ -7,6 +7,8 @@ Analyze this first person view video of someone doing a chore and break it down 
 
 The goal is to use the parts to extract clips showing key moments of the chore being done.
 
+Note that the person may be using tools to manipulate objects. The pink and red tools are not butterfly knives but instead graspers.
+
 Key points of interest:
 - User has difficulty using the tool
 - User makes progress e.g. opening a door, picking a piece of clothing, opening a lid, etc
@@ -31,6 +33,8 @@ No text before or after the JSON.
 """,
     "detailed": """
 Analyze this first person view video of someone performing a chore. Identify and segment key moments with precise timing.
+
+Note that the person may be using tools to manipulate objects. The pink and red tools are not butterfly knives but instead graspers.
 
 Focus on these critical moments:
 - Initial setup or preparation
@@ -61,6 +65,8 @@ No text before or after the JSON.
 Break down this video into segments showing key actions and moments.
 
 For each segment provide start time (MM:SS), end time (MM:SS), activity name, and brief description.
+
+Note that the person may be using tools to manipulate objects. The pink and red tools are not butterfly knives but instead graspers.
 
 Return ONLY valid JSON array format:
 [
@@ -101,6 +107,8 @@ No text before or after the JSON.
     "milestone_based": """
 Analyze this video and identify milestone moments where something changes or progresses.
 
+Note that the person may be using tools to manipulate objects. The pink and red tools are not butterfly knives but instead graspers.
+
 Milestones include:
 - Starting a new sub-task
 - Successfully completing an action (opening, closing, moving, placing)
@@ -120,6 +128,40 @@ Return ONLY a JSON array with this structure:
     "end_time": "00:15",
     "activity": "Activity Name",
     "description": "What happens in this segment"
+  }
+]
+
+No text before or after the JSON.
+""",
+    "grasp_analysis": """
+Analyze this first person view video focusing on how the person grasps and manipulates objects during the task.
+
+If the person is using a tool to grasp something, describe how the tool grasps the object. Do not describe the person's hand if a tool is being used.
+
+For each distinct grasp or manipulation, identify:
+
+Grasp types to look for:
+- Power grasp: Whole hand wrapped around object (e.g., gripping a handle, holding a bottle)
+- Precision grasp: Using 2-3 fingers for fine control (e.g., pinching, picking small items)
+- Palmar grasp: Object held against palm with fingers (e.g., holding a phone, flat object)
+- Lateral/key grasp: Thumb pressing against side of index finger (e.g., holding a key, card)
+- Hook grasp: Fingers curled to carry/hold (e.g., carrying a bag handle)
+- Tip grasp: Using fingertips only (e.g., picking up small objects)
+- Awkward/improper grasp: Unusual or inefficient grip that may indicate difficulty
+
+For each segment where a grasp occurs or changes, provide:
+- Start time (MM:SS format) - when grasp begins or changes
+- End time (MM:SS format) - when grasp ends or changes again
+- Activity name: "[Grasp Type] - [Object]" (e.g., "Precision Grasp - Lid", "Power Grasp - Bottle")
+- Description: Brief description of what they're doing with this grasp and whether it appears effective or if they're struggling
+
+Return ONLY a JSON array with this structure:
+[
+  {
+    "start_time": "00:00",
+    "end_time": "00:15",
+    "activity": "Grasp Type - Object",
+    "description": "What they're doing with this grasp"
   }
 ]
 

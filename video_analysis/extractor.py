@@ -35,7 +35,12 @@ class VideoExtractor:
             raise ValueError(f"Invalid time format: {time_str}")
 
     def extract_segment(
-        self, input_video: str, segment: VideoSegment, output_path: str, overwrite: bool = False
+        self,
+        input_video: str,
+        segment: VideoSegment,
+        output_path: str,
+        overwrite: bool = False,
+        padding_seconds: float = 1.0,
     ) -> bool:
         """Extract a single video segment using ffmpeg
 
@@ -44,6 +49,7 @@ class VideoExtractor:
             segment: VideoSegment with start_time and end_time
             output_path: Path for output video file
             overwrite: Whether to overwrite existing files
+            padding_seconds: Seconds to add before/after segment (default: 1.0)
 
         Returns:
             True if extraction succeeded, False otherwise
@@ -51,6 +57,11 @@ class VideoExtractor:
         try:
             start_seconds = self.time_to_seconds(segment.start_time)
             end_seconds = self.time_to_seconds(segment.end_time)
+
+            # Apply padding (ensure start doesn't go negative)
+            start_seconds = max(0, start_seconds - padding_seconds)
+            end_seconds = end_seconds + padding_seconds
+
             duration = end_seconds - start_seconds
 
             # Build ffmpeg command
@@ -71,7 +82,13 @@ class VideoExtractor:
 
             cmd.append(output_path)
 
-            logger.info(f"Extracting segment: {segment.start_time} - {segment.end_time} to {output_path}")
+            if padding_seconds > 0:
+                logger.info(
+                    f"Extracting segment: {segment.start_time} - {segment.end_time} "
+                    f"(+{padding_seconds}s padding) to {output_path}"
+                )
+            else:
+                logger.info(f"Extracting segment: {segment.start_time} - {segment.end_time} to {output_path}")
 
             result = subprocess.run(cmd, capture_output=True, text=True, check=True)
 
@@ -92,6 +109,7 @@ class VideoExtractor:
         output_dir: str,
         prefix: str = "segment",
         overwrite: bool = False,
+        padding_seconds: float = 1.0,
     ) -> List[str]:
         """Extract all video segments to separate files
 
@@ -101,6 +119,7 @@ class VideoExtractor:
             output_dir: Directory to save extracted segments
             prefix: Prefix for output filenames
             overwrite: Whether to overwrite existing files
+            padding_seconds: Seconds to add before/after each segment (default: 1.0)
 
         Returns:
             List of paths to successfully extracted segments
@@ -121,7 +140,7 @@ class VideoExtractor:
             output_filename = f"{prefix}_{i:03d}_{safe_activity}{ext}"
             output_path = os.path.join(output_dir, output_filename)
 
-            if self.extract_segment(input_video, segment, output_path, overwrite):
+            if self.extract_segment(input_video, segment, output_path, overwrite, padding_seconds):
                 extracted_files.append(output_path)
 
         logger.info(f"Extracted {len(extracted_files)}/{len(segments)} segments to {output_dir}")

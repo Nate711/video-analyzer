@@ -116,7 +116,7 @@ def select_video_interactive(db: VideoDatabase, client: genai.Client) -> dict:
         print(f"\n[{video['id']}] {video['display_name']} - {status}")
         print(f"    Path: {video['local_path']}")
         print(f"    Uploaded: {video['uploaded_at']}")
-        if video['description']:
+        if video["description"]:
             print(f"    Description: {video['description']}")
 
     print("=" * 120)
@@ -154,17 +154,13 @@ def select_video_interactive(db: VideoDatabase, client: genai.Client) -> dict:
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="Compare different prompts for video analysis and extract segments"
-    )
+    parser = argparse.ArgumentParser(description="Compare different prompts for video analysis and extract segments")
     parser.add_argument(
         "video_source",
         nargs="?",
         help="Video ID from database or path to video file. Omit for interactive selection.",
     )
-    parser.add_argument(
-        "--db", default="videos.json", help="Path to video database JSON file (default: videos.json)"
-    )
+    parser.add_argument("--db", default="videos.json", help="Path to video database JSON file (default: videos.json)")
     parser.add_argument(
         "--prompts",
         nargs="+",
@@ -185,6 +181,18 @@ def main():
         "--skip-analysis",
         action="store_true",
         help="Skip analysis and only extract videos from existing JSON results",
+    )
+    parser.add_argument(
+        "--fps",
+        type=float,
+        default=1.0,
+        help="Frames per second to sample video during analysis (default: 1.0)",
+    )
+    parser.add_argument(
+        "--padding",
+        type=float,
+        default=1.0,
+        help="Seconds to add before/after each extracted segment (default: 1.0)",
     )
 
     args = parser.parse_args()
@@ -285,7 +293,7 @@ def main():
                 prompt = PROMPTS[prompt_name]
 
                 # Use pre-uploaded file
-                logger.info(f"Using pre-uploaded Gemini file: {gemini_file} (sampling at 2 FPS)")
+                logger.info(f"Using pre-uploaded Gemini file: {gemini_file} (sampling at {args.fps} FPS)")
                 from google.genai import types
 
                 response = client.models.generate_content(
@@ -293,8 +301,10 @@ def main():
                     contents=types.Content(
                         parts=[
                             types.Part(
-                                file_data=types.FileData(file_uri=f"https://generativelanguage.googleapis.com/v1beta/{gemini_file}"),
-                                video_metadata=types.VideoMetadata(fps=2),
+                                file_data=types.FileData(
+                                    file_uri=f"https://generativelanguage.googleapis.com/v1beta/{gemini_file}"
+                                ),
+                                video_metadata=types.VideoMetadata(fps=args.fps),
                             ),
                             types.Part(text=prompt),
                         ]
@@ -319,7 +329,7 @@ def main():
             # Extract video segments if requested
             if args.extract_videos and segments:
                 videos_dir = prompt_output_dir / "videos"
-                logger.info(f"\nExtracting video segments to {videos_dir}")
+                logger.info(f"\nExtracting video segments to {videos_dir} (padding: {args.padding}s)")
 
                 extracted = extractor.extract_all_segments(
                     video_path,
@@ -327,6 +337,7 @@ def main():
                     str(videos_dir),
                     prefix=prompt_name,
                     overwrite=True,
+                    padding_seconds=args.padding,
                 )
 
                 logger.info(f"Extracted {len(extracted)} video segments")
