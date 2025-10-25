@@ -145,3 +145,158 @@ class VideoExtractor:
 
         logger.info(f"Extracted {len(extracted_files)}/{len(segments)} segments to {output_dir}")
         return extracted_files
+
+    def convert_to_gif(
+        self,
+        input_video: str,
+        output_gif: str,
+        max_size_mb: float = 4.0,
+        fps: int = 10,
+        width: int = 480,
+    ) -> bool:
+        """Convert a video to an optimized GIF
+
+        Args:
+            input_video: Path to input video file
+            output_gif: Path for output GIF file
+            max_size_mb: Target max size in MB (will reduce quality if needed)
+            fps: Frames per second for GIF (default: 10)
+            width: Width in pixels (height auto-scaled, default: 480)
+
+        Returns:
+            True if conversion succeeded, False otherwise
+        """
+        try:
+            # Two-pass ffmpeg for optimized GIF with palette
+            palette_path = output_gif.replace('.gif', '_palette.png')
+
+            # First pass: generate palette
+            palette_cmd = [
+                "ffmpeg",
+                "-i",
+                input_video,
+                "-vf",
+                f"fps={fps},scale={width}:-1:flags=lanczos,palettegen",
+                "-y",
+                palette_path,
+            ]
+
+            logger.info(f"Generating palette for GIF optimization...")
+            subprocess.run(palette_cmd, capture_output=True, text=True, check=True)
+
+            # Second pass: create GIF using palette
+            gif_cmd = [
+                "ffmpeg",
+                "-i",
+                input_video,
+                "-i",
+                palette_path,
+                "-lavfi",
+                f"fps={fps},scale={width}:-1:flags=lanczos[x];[x][1:v]paletteuse",
+                "-y",
+                output_gif,
+            ]
+
+            logger.info(f"Converting to GIF: {output_gif}")
+            subprocess.run(gif_cmd, capture_output=True, text=True, check=True)
+
+            # Clean up palette
+            if os.path.exists(palette_path):
+                os.remove(palette_path)
+
+            # Check file size and reduce quality if needed
+            file_size_mb = os.path.getsize(output_gif) / (1024 * 1024)
+
+            if file_size_mb > max_size_mb:
+                logger.warning(f"GIF size {file_size_mb:.2f}MB exceeds {max_size_mb}MB, reducing quality...")
+
+                # Reduce width and try again
+                new_width = int(width * 0.75)
+                temp_gif = output_gif.replace('.gif', '_temp.gif')
+
+                # Regenerate palette with smaller size
+                palette_cmd[3] = f"fps={fps},scale={new_width}:-1:flags=lanczos,palettegen"
+                subprocess.run(palette_cmd, capture_output=True, text=True, check=True)
+
+                # Regenerate GIF with smaller size
+                gif_cmd[5] = f"fps={fps},scale={new_width}:-1:flags=lanczos[x];[x][1:v]paletteuse"
+                gif_cmd[-1] = temp_gif
+                subprocess.run(gif_cmd, capture_output=True, text=True, check=True)
+
+                # Replace original
+                os.replace(temp_gif, output_gif)
+
+                # Clean up palette
+                if os.path.exists(palette_path):
+                    os.remove(palette_path)
+
+                file_size_mb = os.path.getsize(output_gif) / (1024 * 1024)
+                logger.info(f"Reduced GIF size to {file_size_mb:.2f}MB")
+
+            logger.info(f"Successfully created GIF: {output_gif} ({file_size_mb:.2f}MB)")
+            return True
+
+        except subprocess.CalledProcessError as e:
+            logger.error(f"ffmpeg error during GIF conversion: {e.stderr}")
+            return False
+        except Exception as e:
+            logger.error(f"Error converting to GIF: {e}")
+            return False
+
+    def extract_all_segments_as_gifs(
+        self,
+        input_video: str,
+        segments: List[VideoSegment],
+        output_dir: str,
+        prefix: str = "segment",
+        padding_seconds: float = 1.0,
+        max_size_mb: float = 4.0,
+        fps: int = 10,
+        width: int = 480,
+    ) -> List[str]:
+        """Extract all video segments as GIFs
+
+        Args:
+            input_video: Path to input video file
+            segments: List of VideoSegment objects
+            output_dir: Directory to save extracted GIFs
+            prefix: Prefix for output filenames
+            padding_seconds: Seconds to add before/after each segment (default: 1.0)
+            max_size_mb: Target max size in MB per GIF (default: 4.0)
+            fps: Frames per second for GIF (default: 10)
+            width: Width in pixels (default: 480)
+
+        Returns:
+            List of paths to successfully created GIFs
+        """
+        # First extract video segments
+        temp_dir = Path(output_dir) / "_temp_videos"
+        temp_dir.mkdir(parents=True, exist_ok=True)
+
+        logger.info("Extracting video segments for GIF conversion...")
+        video_segments = self.extract_all_segments(
+            input_video,
+            segments,
+            str(temp_dir),
+            prefix=prefix,
+            overwrite=True,
+            padding_seconds=padding_seconds,
+        )
+
+        # Convert each to GIF
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        gif_files = []
+
+        for video_path in video_segments:
+            gif_path = str(Path(output_dir) / Path(video_path).stem) + ".gif"
+
+            if self.convert_to_gif(video_path, gif_path, max_size_mb, fps, width):
+                gif_files.append(gif_path)
+
+        # Clean up temp videos
+        import shutil
+
+        shutil.rmtree(temp_dir)
+
+        logger.info(f"Created {len(gif_files)}/{len(segments)} GIFs in {output_dir}")
+        return gif_files

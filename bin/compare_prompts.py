@@ -194,6 +194,29 @@ def main():
         default=1.0,
         help="Seconds to add before/after each extracted segment (default: 1.0)",
     )
+    parser.add_argument(
+        "--as-gif",
+        action="store_true",
+        help="Extract segments as GIFs instead of videos (optimized, <4MB each)",
+    )
+    parser.add_argument(
+        "--gif-width",
+        type=int,
+        default=480,
+        help="Width in pixels for GIFs (default: 480)",
+    )
+    parser.add_argument(
+        "--gif-fps",
+        type=int,
+        default=10,
+        help="Frames per second for GIFs (default: 10)",
+    )
+    parser.add_argument(
+        "--gif-max-size",
+        type=float,
+        default=4.0,
+        help="Maximum size in MB for each GIF (default: 4.0)",
+    )
 
     args = parser.parse_args()
 
@@ -328,19 +351,39 @@ def main():
 
             # Extract video segments if requested
             if args.extract_videos and segments:
-                videos_dir = prompt_output_dir / "videos"
-                logger.info(f"\nExtracting video segments to {videos_dir} (padding: {args.padding}s)")
+                if args.as_gif:
+                    output_dir = prompt_output_dir / "gifs"
+                    logger.info(
+                        f"\nExtracting segments as GIFs to {output_dir} "
+                        f"(padding: {args.padding}s, {args.gif_width}px, {args.gif_fps}fps, max {args.gif_max_size}MB)"
+                    )
 
-                extracted = extractor.extract_all_segments(
-                    video_path,
-                    segments,
-                    str(videos_dir),
-                    prefix=prompt_name,
-                    overwrite=True,
-                    padding_seconds=args.padding,
-                )
+                    extracted = extractor.extract_all_segments_as_gifs(
+                        video_path,
+                        segments,
+                        str(output_dir),
+                        prefix=prompt_name,
+                        padding_seconds=args.padding,
+                        max_size_mb=args.gif_max_size,
+                        fps=args.gif_fps,
+                        width=args.gif_width,
+                    )
 
-                logger.info(f"Extracted {len(extracted)} video segments")
+                    logger.info(f"Created {len(extracted)} GIFs")
+                else:
+                    videos_dir = prompt_output_dir / "videos"
+                    logger.info(f"\nExtracting video segments to {videos_dir} (padding: {args.padding}s)")
+
+                    extracted = extractor.extract_all_segments(
+                        video_path,
+                        segments,
+                        str(videos_dir),
+                        prefix=prompt_name,
+                        overwrite=True,
+                        padding_seconds=args.padding,
+                    )
+
+                    logger.info(f"Extracted {len(extracted)} video segments")
 
         except Exception as e:
             logger.exception(f"Error processing prompt '{prompt_name}': {e}")
@@ -354,8 +397,12 @@ def main():
     logger.info(f"Tested prompts: {', '.join(prompts_to_test)}")
 
     if args.extract_videos:
-        logger.info("\nVideo segments extracted to subdirectories for each prompt")
-        logger.info("Compare the extracted clips to evaluate which prompt works best")
+        if args.as_gif:
+            logger.info("\nGIF segments created in subdirectories for each prompt")
+            logger.info("Compare the GIFs to evaluate which prompt works best")
+        else:
+            logger.info("\nVideo segments extracted to subdirectories for each prompt")
+            logger.info("Compare the extracted clips to evaluate which prompt works best")
 
 
 if __name__ == "__main__":
