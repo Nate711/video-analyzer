@@ -253,8 +253,10 @@ class VideoExtractor:
         max_size_mb: float = 4.0,
         fps: int = 10,
         width: int = 480,
+        max_parallel: int = 12,
+        use_palette: bool = False,
     ) -> List[str]:
-        """Extract all video segments as GIFs
+        """Extract all video segments as GIFs using parallel conversion
 
         Args:
             input_video: Path to input video file
@@ -265,10 +267,15 @@ class VideoExtractor:
             max_size_mb: Target max size in MB per GIF (default: 4.0)
             fps: Frames per second for GIF (default: 10)
             width: Width in pixels (default: 480)
+            max_parallel: Maximum parallel conversions (default: 12)
+            use_palette: Generate optimized palette for better quality (slower, default: False)
 
         Returns:
             List of paths to successfully created GIFs
         """
+        import shutil
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
         # First extract video segments
         temp_dir = Path(output_dir) / "_temp_videos"
         temp_dir.mkdir(parents=True, exist_ok=True)
@@ -283,19 +290,131 @@ class VideoExtractor:
             padding_seconds=padding_seconds,
         )
 
-        # Convert each to GIF
-        Path(output_dir).mkdir(parents=True, exist_ok=True)
-        gif_files = []
+        if not video_segments:
+            logger.warning("No video segments extracted, skipping GIF conversion")
+            shutil.rmtree(temp_dir)
+            return []
 
-        for video_path in video_segments:
+        # Generate palette if requested
+        Path(output_dir).mkdir(parents=True, exist_ok=True)
+        palette_path = None
+
+        if use_palette:
+            palette_path = str(Path(output_dir) / "shared_palette.png")
+            logger.info("Generating shared color palette from source video...")
+            try:
+                palette_cmd = [
+                    "ffmpeg",
+                    "-i",
+                    input_video,
+                    "-vf",
+                    f"fps={fps},scale={width}:-1:flags=lanczos,palettegen",
+                    "-y",
+                    palette_path,
+                ]
+                subprocess.run(palette_cmd, capture_output=True, text=True, check=True)
+                logger.info("Shared palette generated successfully")
+            except subprocess.CalledProcessError as e:
+                logger.error(f"Failed to generate palette: {e.stderr}")
+                shutil.rmtree(temp_dir)
+                return []
+        else:
+            logger.info("Skipping palette generation (faster but lower quality)")
+
+        # Convert videos to GIFs in parallel
+        logger.info(f"Converting {len(video_segments)} segments to GIFs (up to {max_parallel} parallel)...")
+
+        def convert_single_gif(video_path: str) -> tuple[str, bool]:
+            """Convert a single video to GIF"""
             gif_path = str(Path(output_dir) / Path(video_path).stem) + ".gif"
 
-            if self.convert_to_gif(video_path, gif_path, max_size_mb, fps, width):
-                gif_files.append(gif_path)
+            try:
+                if use_palette:
+                    # Use palette for better quality
+                    gif_cmd = [
+                        "ffmpeg",
+                        "-i",
+                        video_path,
+                        "-i",
+                        palette_path,
+                        "-lavfi",
+                        f"fps={fps},scale={width}:-1:flags=lanczos[x];[x][1:v]paletteuse",
+                        "-y",
+                        gif_path,
+                    ]
+                else:
+                    # Direct conversion (faster, larger files)
+                    gif_cmd = [
+                        "ffmpeg",
+                        "-i",
+                        video_path,
+                        "-vf",
+                        f"fps={fps},scale={width}:-1:flags=lanczos",
+                        "-y",
+                        gif_path,
+                    ]
 
-        # Clean up temp videos
-        import shutil
+                subprocess.run(gif_cmd, capture_output=True, text=True, check=True)
 
+                # Check file size and reduce if needed
+                file_size_mb = os.path.getsize(gif_path) / (1024 * 1024)
+
+                if file_size_mb > max_size_mb:
+                    logger.warning(
+                        f"{Path(gif_path).name}: {file_size_mb:.2f}MB exceeds {max_size_mb}MB, reducing..."
+                    )
+
+                    # Reduce width and regenerate
+                    new_width = int(width * 0.75)
+                    temp_gif = gif_path.replace(".gif", "_temp.gif")
+
+                    if use_palette:
+                        reduced_cmd = [
+                            "ffmpeg",
+                            "-i",
+                            video_path,
+                            "-i",
+                            palette_path,
+                            "-lavfi",
+                            f"fps={fps},scale={new_width}:-1:flags=lanczos[x];[x][1:v]paletteuse",
+                            "-y",
+                            temp_gif,
+                        ]
+                    else:
+                        reduced_cmd = [
+                            "ffmpeg",
+                            "-i",
+                            video_path,
+                            "-vf",
+                            f"fps={fps},scale={new_width}:-1:flags=lanczos",
+                            "-y",
+                            temp_gif,
+                        ]
+
+                    subprocess.run(reduced_cmd, capture_output=True, text=True, check=True)
+                    os.replace(temp_gif, gif_path)
+                    file_size_mb = os.path.getsize(gif_path) / (1024 * 1024)
+
+                logger.info(f"Created {Path(gif_path).name} ({file_size_mb:.2f}MB)")
+                return (gif_path, True)
+
+            except Exception as e:
+                logger.error(f"Failed to convert {Path(video_path).name}: {e}")
+                return (gif_path, False)
+
+        # Execute conversions in parallel
+        gif_files = []
+        with ThreadPoolExecutor(max_workers=max_parallel) as executor:
+            futures = {executor.submit(convert_single_gif, vpath): vpath for vpath in video_segments}
+
+            for future in as_completed(futures):
+                gif_path, success = future.result()
+                if success:
+                    gif_files.append(gif_path)
+
+        # Clean up
+        if palette_path and os.path.exists(palette_path):
+            os.remove(palette_path)
         shutil.rmtree(temp_dir)
 
         logger.info(f"Created {len(gif_files)}/{len(segments)} GIFs in {output_dir}")

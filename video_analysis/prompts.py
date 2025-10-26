@@ -167,6 +167,47 @@ Return ONLY a JSON array with this structure:
 
 No text before or after the JSON.
 """,
+    "volleyball": """
+Analyze this volleyball game video and identify key plays and player actions.
+
+For each significant play, segment the video to capture:
+
+Player Actions to Identify:
+- Serve: Player serving the ball to start a rally
+- Spike/Hit: Player jumping and hitting the ball aggressively downward over the net
+- Serve Receive: Player passing a served ball (often with platform/forearms)
+- Dig: Player passing a spiked ball (defensive save, often low to ground)
+- Set: Player using fingertips to set up a teammate for attack (usually overhead)
+- Block: Player(s) jumping at net with hands up to block opponent's attack
+- Free Ball: Player hitting ball over net without jumping (not a spike)
+
+For each segment, identify:
+- The player performing the action described by clothing (shirt and shorts color/style) and position like middle blocker, outside hitter, etc.
+- The specific action being performed
+- The outcome if visible (successful/unsuccessful, point scored, error, etc.)
+
+Segment timing:
+- Start a few seconds before the action begins (to show setup/approach)
+- End a few seconds after completion (to show result)
+
+For each play segment, provide:
+- Start time (MM:SS format)
+- End time (MM:SS format)
+- Activity name: "[Player] - [Action]" (e.g., "Player #7 - Spike", "Back row - Dig", "Setter - Set")
+- Description: Brief description of what happens (e.g., "Player attempts spike from right side, ball goes out", "Successful dig keeps rally alive")
+
+Return ONLY a JSON array with this structure:
+[
+  {
+    "start_time": "00:00",
+    "end_time": "00:15",
+    "activity": "Player - Action",
+    "description": "What happens in this play"
+  }
+]
+
+No text before or after the JSON.
+""",
 }
 
 

@@ -217,6 +217,17 @@ def main():
         default=4.0,
         help="Maximum size in MB for each GIF (default: 4.0)",
     )
+    parser.add_argument(
+        "--gif-parallel",
+        type=int,
+        default=12,
+        help="Maximum parallel GIF conversions (default: 12)",
+    )
+    parser.add_argument(
+        "--gif-palette",
+        action="store_true",
+        help="Generate optimized color palette for GIFs (higher quality, slower)",
+    )
 
     args = parser.parse_args()
 
@@ -367,6 +378,8 @@ def main():
                         max_size_mb=args.gif_max_size,
                         fps=args.gif_fps,
                         width=args.gif_width,
+                        max_parallel=args.gif_parallel,
+                        use_palette=args.gif_palette,
                     )
 
                     logger.info(f"Created {len(extracted)} GIFs")
